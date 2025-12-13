@@ -196,6 +196,10 @@ function Receive-CippOrchestrationTrigger {
                 $DurableMode = 'Sequence'
                 $NoWait = $false
             }
+            'NoScaling' {
+                $DurableMode = 'NoScaling'
+                $NoWait = $false
+            }
             default {
                 $DurableMode = 'FanOut (Default)'
                 $NoWait = $true
@@ -213,21 +217,34 @@ function Receive-CippOrchestrationTrigger {
         if (($Batch | Measure-Object).Count -gt 0) {
             Write-Information "Batch Count: $($Batch.Count)"
             $Output = foreach ($Item in $Batch) {
-                $DurableActivity = @{
-                    FunctionName = 'CIPPActivityFunction'
-                    Input        = $Item
-                    NoWait       = $NoWait
-                    RetryOptions = $RetryOptions
-                    ErrorAction  = 'Stop'
+                if ($DurableMode -eq 'NoScaling') {
+                    $Activity = @{
+                        FunctionName = 'CIPPActivityFunction'
+                        Input        = $Item
+                        ErrorAction  = 'Stop'
+                    }
+                    Invoke-ActivityFunction @Activity
+                } else {
+                    $DurableActivity = @{
+                        FunctionName = 'CIPPActivityFunction'
+                        Input        = $Item
+                        NoWait       = $NoWait
+                        RetryOptions = $RetryOptions
+                        ErrorAction  = 'Stop'
+                    }
+                    Invoke-DurableActivity @DurableActivity
                 }
-                Invoke-DurableActivity @DurableActivity
             }
 
             if ($NoWait -and $Output) {
                 $Output = $Output | Where-Object { $_.GetType().Name -eq 'ActivityInvocationTask' }
                 if (($Output | Measure-Object).Count -gt 0) {
                     Write-Information "Waiting for ($($Output.Count)) activity functions to complete..."
-                    $Results = Wait-ActivityFunction -Task @($Output)
+                    $Results = foreach ($Task in $Output) {
+                        try {
+                            Wait-ActivityFunction -Task $Task
+                        } catch {}
+                    }
                 } else {
                     $Results = @()
                 }
@@ -273,7 +290,16 @@ function Receive-CippActivityTrigger {
     try {
         $Output = $null
         Set-Location (Get-Item $PSScriptRoot).Parent.Parent.FullName
+        $metric = @{
+            Kind         = 'CIPPCommandStart'
+            InvocationId = "$($ExecutionContext.InvocationId)"
+            Command      = $Item.Command
+            Tenant       = $Item.TenantFilter.defaultDomainName
+            TaskName     = $Item.TaskName
+            JSONData     = ($Item | ConvertTo-Json -Depth 10 -Compress)
+        } | ConvertTo-Json -Depth 10 -Compress
 
+        Write-Information -MessageData $metric -Tag 'CIPPCommandStart'
         if ($Item.QueueId) {
             if ($Item.QueueName) {
                 $QueueName = $Item.QueueName
@@ -338,6 +364,7 @@ function Receive-CippActivityTrigger {
                 $Output = Measure-CippTask -TaskName $taskName -Metadata $metadata -Script {
                     Invoke-Command -ScriptBlock { & $FunctionName -Item $Item }
                 }
+                $Status = 'Completed'
 
                 Write-Verbose "Activity completed Function: $FunctionName."
                 if ($TaskStatus) {
@@ -346,6 +373,7 @@ function Receive-CippActivityTrigger {
                 }
             } catch {
                 $ErrorMsg = $_.Exception.Message
+                $Status = 'Failed'
                 if ($TaskStatus) {
                     $QueueTask.Status = 'Failed'
                     $QueueTask.Message = $ErrorMsg
@@ -354,6 +382,7 @@ function Receive-CippActivityTrigger {
             }
         } else {
             $ErrorMsg = 'Function not provided'
+            $Status = 'Failed'
             if ($TaskStatus) {
                 $QueueTask.Status = 'Failed'
                 $null = Set-CippQueueTask @QueueTask
@@ -361,6 +390,8 @@ function Receive-CippActivityTrigger {
         }
     } catch {
         Write-Error "Error in Receive-CippActivityTrigger: $($_.Exception.Message)"
+        $Status = 'Failed'
+        $Output = $null
         if ($TaskStatus) {
             $QueueTask.Status = 'Failed'
             $null = Set-CippQueueTask @QueueTask
@@ -371,7 +402,7 @@ function Receive-CippActivityTrigger {
     if ($null -ne $Output -and $Output -ne '') {
         return $Output
     } else {
-        return
+        return "Activity function ended with status $($Status)."
     }
 }
 
@@ -390,6 +421,8 @@ function Receive-CIPPTimerTrigger {
 
     $UtcNow = (Get-Date).ToUniversalTime()
     $Functions = Get-CIPPTimerFunctions
+    Write-Host "CIPP Timer Trigger executed at $UtcNow. Found $($Functions.Count) functions to evaluate. The names are as follows: $($Functions.Command -join ', ')"
+    Write-Host "CIPPTIMER: $($Functions | ConvertTo-Json -Depth 10 -Compress)"
     $Table = Get-CIPPTable -tablename CIPPTimers
     $Statuses = Get-CIPPAzDataTableEntity @Table
     $FunctionName = $env:WEBSITE_SITE_NAME
@@ -429,11 +462,21 @@ function Receive-CIPPTimerTrigger {
             if ($Parameters.Count -gt 0) {
                 $metadata['ParameterCount'] = $Parameters.Count
                 # Add specific known parameters
+                Write-Host "CIPP TIMER PARAMETERS: $($Parameters | ConvertTo-Json -Depth 10 -Compress)"
                 if ($Parameters.Tenant) {
                     $metadata['Tenant'] = $Parameters.Tenant
                 }
                 if ($Parameters.TenantFilter) {
                     $metadata['Tenant'] = $Parameters.TenantFilter
+                }
+                if ($Parameters.TenantFilter.value) {
+                    $metadata['Tenant'] = $Parameters.TenantFilter.value
+                }
+                if ($Parameters.Tenant.value) {
+                    $metadata['Tenant'] = $Parameters.Tenant.value
+                }
+                if ($Parameters.Tenant.defaultDomainName) {
+                    $metadata['Tenant'] = $Parameters.Tenant.defaultDomainName
                 }
             }
 

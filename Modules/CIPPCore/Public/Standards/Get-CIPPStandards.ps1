@@ -4,6 +4,9 @@ function Get-CIPPStandards {
         [string]$TenantFilter = 'allTenants',
 
         [Parameter(Mandatory = $false)]
+        [switch]$LicenseChecks = $false,
+
+        [Parameter(Mandatory = $false)]
         [switch]$ListAllTenants,
 
         [Parameter(Mandatory = $false)]
@@ -398,12 +401,10 @@ function Get-CIPPStandards {
                     }
                 }
             }
-
-            # Emit one object per unique (StandardName, TemplateList.value)
+            # License checks and policy timestamp filtering moved to Push-CIPPStandardsList activity
             foreach ($Key in $ComputedStandards.Keys) {
                 $Standard = $ComputedStandards[$Key]
                 $StandardName = $Key -replace '\|.*$', ''
-
                 # Preserve TemplateId before removing
                 $PreservedTemplateId = $Standard.TemplateId
                 $Standard.PSObject.Properties.Remove('TemplateId') | Out-Null
@@ -420,4 +421,3 @@ function Get-CIPPStandards {
         }
     }
 }
-
