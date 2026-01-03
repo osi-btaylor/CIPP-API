@@ -10,23 +10,15 @@
   "functionTimeout": "00:10:00",
   "extensions": {
     "durableTask": {
-      "maxConcurrentActivityFunctions": 5,
-      "maxConcurrentOrchestratorFunctions": 2,
+      "maxConcurrentActivityFunctions": 1,
+      "maxConcurrentOrchestratorFunctions": 5,
       "tracing": {
         "distributedTracingEnabled": false,
         "version": "None"
       },
-      "defaultVersion": "8.7.2",
+      "defaultVersion": "8.8.2",
       "versionMatchStrategy": "Strict",
       "versionFailureStrategy": "Fail"
-    }
-  },
-  "logging": {
-    "logLevel": {
-      "default": "None"
-    },
-    "console": {
-      "isEnabled": false
     }
   }
 }
