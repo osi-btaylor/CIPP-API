@@ -9,16 +9,8 @@ function Get-ApplicationInsightsQuery {
         throw 'Application Insights is not enabled for this instance.'
     }
 
-    if ($env:MSI_SECRET) {
-        $null = Connect-AzAccount -Identity
-    }
-
-    $SubscriptionId = $env:WEBSITE_OWNER_NAME -split '\+' | Select-Object -First 1
-    if ($env:WEBSITE_SKU -ne 'FlexConsumption' -and $Owner -match '^(?<SubscriptionId>[^+]+)\+(?<RGName>[^-]+(?:-[^-]+)*?)(?:-[^-]+webspace(?:-Linux)?)?$') {
-        $RGName = $Matches.RGName
-    } else {
-        $RGName = $env:WEBSITE_RESOURCE_GROUP
-    }
+    $SubscriptionId = Get-CIPPAzFunctionAppSubId
+    $RGName = Get-CIPPFunctionAppResourceGroup
     $AppInsightsName = $env:WEBSITE_SITE_NAME
 
     $Body = @{
@@ -31,12 +23,12 @@ function Get-ApplicationInsightsQuery {
     $AppInsightsQuery = 'subscriptions/{0}/resourceGroups/{1}/providers/microsoft.insights/components/{2}/query' -f $SubscriptionId, $RGName, $AppInsightsName
 
     $resource = 'https://api.loganalytics.io'
-    $Token = Get-AzAccessToken -ResourceUrl $resource
+    $Token = Get-CIPPAzIdentityToken -ResourceUrl $resource
 
-    $headerParams = @{'Authorization' = "Bearer $($Token.Token)" }
+    $headerParams = @{'Authorization' = "Bearer $Token" }
     $logAnalyticsBaseURI = 'https://api.loganalytics.io/v1'
 
-    $result = Invoke-RestMethod -Method POST -Uri "$($logAnalyticsBaseURI)/$AppInsightsQuery" -Headers $headerParams -Body $Body -ContentType 'application/json' -ErrorAction Stop
+    $result = Invoke-CIPPRestMethod -Method POST -Uri "$($logAnalyticsBaseURI)/$AppInsightsQuery" -Headers $headerParams -Body $Body -ContentType 'application/json' -ErrorAction Stop
 
     # Format Result to PSObject
     $headerRow = $null
